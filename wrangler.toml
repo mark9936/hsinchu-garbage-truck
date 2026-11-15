@@ -1,0 +1,7 @@
+name = "hsinchu-trash-proxy"
+main = "worker.js"
+compatibility_date = "2026-01-01"
+
+# 也可以在這裡設定允許的網頁來源（逗號分隔），設定後會取代 worker.js 內的 ALLOWED_ORIGINS。
+# [vars]
+# ALLOWED_ORIGINS = "https://YOUR-GITHUB-NAME.github.io,http://localhost:8000"
