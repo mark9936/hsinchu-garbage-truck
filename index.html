@@ -17,7 +17,7 @@
   --hair: #e1e0d9; --border: rgba(11,11,11,.10); --wash: rgba(11,11,11,.05);
   --accent: #2a78d6; --accent-ink: #fff;
   --good: #0ca30c; --warn: #fab219; --serious: #ec835a; --critical: #d03b3b;
-  --peek: 108px;
+  --top-h: 0px;   /* 手機版上方狀態列的下緣位置，由 JS 依實際高度設定 */
 }
 @media (prefers-color-scheme: dark) {
   :root {
@@ -34,14 +34,14 @@ button, input, select { font: inherit; color: inherit; }
 button { cursor: pointer; }
 h1, h2 { margin: 0; }
 
-#app { display: grid; grid-template-columns: 372px 1fr; height: 100vh; height: 100dvh; }
-#map { min-width: 0; background: #e9e8e3; }
-#panel { display: flex; flex-direction: column; min-height: 0; background: var(--surface); border-right: 1px solid var(--hair); z-index: 1000; }
+#app { display: grid; grid-template-columns: calc(372px + env(safe-area-inset-left, 0px)) 1fr; height: 100vh; height: 100dvh; }
+#map { position: relative; min-width: 0; background: #e9e8e3; }   /* 一定要是已定位元素：手機直向載入再轉橫向時，Leaflet 不會重新檢查 */
+#panel { display: flex; flex-direction: column; min-height: 0; padding-left: env(safe-area-inset-left, 0px); background: var(--surface); border-right: 1px solid var(--hair); z-index: 1000; }
 
 .hd { padding: 14px 16px 12px; border-bottom: 1px solid var(--hair); }
 .hd-top { display: flex; align-items: center; gap: 8px; }
 .hd h1 { font-size: 17px; font-weight: 650; flex: 1; letter-spacing: .01em; }
-.grab { display: none; }
+.menu-btn, .drawer-hd, #scrim { display: none; }   /* 只在手機版出現 */
 .status { display: flex; align-items: center; gap: 8px; margin-top: 6px; color: var(--ink-2); font-size: 12.5px; min-height: 28px; }
 .status #statusText { flex: 1; }
 .status.err #statusText { color: var(--critical); }
@@ -50,7 +50,7 @@ h1, h2 { margin: 0; }
 .icon-btn { width: 30px; height: 30px; border-radius: 8px; border: 1px solid var(--border); background: transparent; display: grid; place-items: center; flex: none; }
 .icon-btn:hover { background: var(--wash); }
 .icon-btn svg { width: 16px; height: 16px; }
-.busy .icon-btn svg { animation: spin .9s linear infinite; }
+.busy #btnRefresh svg { animation: spin .9s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
 .body { flex: 1; overflow-y: auto; overscroll-behavior: contain; padding: 4px 16px 20px; }
@@ -63,11 +63,11 @@ h2 .spacer { flex: 1; }
 .link:hover { text-decoration: underline; }
 
 .row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 8px; margin-top: 8px; }
-.row:first-of-type { margin-top: 0; }
+h2 + .row { margin-top: 0; }
 .row > .lbl { width: 44px; flex: none; color: var(--ink-2); font-size: 13px; }
 
 .addr { display: flex; gap: 6px; }
-.addr input { flex: 1; min-width: 0; height: 36px; padding: 0 10px; border: 1px solid var(--border); border-radius: 8px; background: var(--plane); }
+.addr input { flex: 1; min-width: 0; height: 36px; padding: 0 10px; text-overflow: ellipsis; border: 1px solid var(--border); border-radius: 8px; background: var(--plane); }
 .addr input:focus, select:focus, .btn:focus-visible, .seg button:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .btn { height: 36px; padding: 0 12px; border-radius: 8px; border: 1px solid var(--border); background: var(--surface); white-space: nowrap; display: inline-flex; align-items: center; gap: 6px; }
 .btn:hover { background: var(--wash); }
@@ -183,16 +183,74 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
 .car-arrow { position: absolute; inset: 0; pointer-events: none; }
 .car-arrow::before { content: ""; position: absolute; left: 50%; top: -5px; margin-left: -6px; border: 6px solid transparent; border-top: 0; border-bottom: 9px solid #0b0b0b; filter: drop-shadow(0 0 1px #fff); }
 
-/* ── 手機：控制面板變成底部抽屜 ── */
+/* ── 手機：上方是狀態列，功能列從左側滑出（內容與電腦版的左側欄相同） ── */
 @media (max-width: 760px) {
   #app { display: block; }
   #map { position: fixed; inset: 0; }
-  #panel { position: fixed; left: 0; right: 0; bottom: 0; height: min(78dvh, 640px); border-right: 0; border-radius: 16px 16px 0 0; box-shadow: 0 -6px 24px rgba(0,0,0,.18); transform: translateY(calc(100% - var(--peek))); transition: transform .25s ease; }
-  #panel.open { transform: none; }
-  .hd { padding-top: 6px; cursor: pointer; }
-  .grab { display: block; width: 40px; height: 4px; border-radius: 2px; background: var(--hair); margin: 0 auto 8px; }
-  .hd h1 { font-size: 15px; }
-  .leaflet-bottom { margin-bottom: var(--peek); }
+  #panel { display: contents; }   /* 讓狀態列與功能列各自定位 */
+
+  .hd {
+    position: fixed; z-index: 1001;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    left: calc(env(safe-area-inset-left, 0px) + 8px);
+    right: calc(env(safe-area-inset-right, 0px) + 8px);
+    display: grid; grid-template-columns: auto minmax(0, 1fr) auto; align-items: center; gap: 0 10px;
+    padding: 8px; border: 1px solid var(--hair); border-radius: 14px;
+    background: var(--surface); box-shadow: 0 4px 18px rgba(0,0,0,.18);
+  }
+  .hd-top { display: contents; }
+  .hd h1 { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }   /* 標題改放在功能列頂端 */
+  .menu-btn {
+    display: inline-flex; align-items: center; gap: 6px; grid-column: 1; grid-row: 1;
+    height: 40px; padding: 0 13px 0 11px; border: 0; border-radius: 10px;
+    background: var(--ink); color: var(--surface); font-size: 14px; font-weight: 600; white-space: nowrap;
+  }
+  .menu-btn svg { width: 18px; height: 18px; flex: none; }
+  .status { grid-column: 2; grid-row: 1; margin: 0; min-height: 0; line-height: 1.35; }
+  #btnRefresh { grid-column: 3; grid-row: 1; }
+  .next { grid-column: 1 / -1; grid-row: 2; margin: 8px 2px 0; padding-top: 7px; border-top: 1px solid var(--hair); }
+
+  .body {
+    position: fixed; z-index: 1200; top: 0; bottom: 0; left: 0; width: min(88vw, 380px);
+    padding: 0 16px calc(72px + env(safe-area-inset-bottom, 0px)) calc(16px + env(safe-area-inset-left, 0px));
+    background: var(--surface); box-shadow: 8px 0 30px rgba(0,0,0,.28);
+    transform: translateX(-105%); visibility: hidden;
+    transition: transform .25s ease, visibility 0s linear .25s;
+  }
+  #panel.open .body { transform: none; visibility: visible; transition: transform .25s ease; }
+  .drawer-hd {
+    display: flex; align-items: center; gap: 8px; position: sticky; top: 0; z-index: 2;
+    margin: 0 -16px 0 calc(-16px - env(safe-area-inset-left, 0px));
+    padding: calc(10px + env(safe-area-inset-top, 0px)) 12px 10px calc(16px + env(safe-area-inset-left, 0px));
+    background: var(--surface); border-bottom: 1px solid var(--hair); font-size: 16px; font-weight: 650;
+  }
+  .drawer-hd span { flex: 1; }
+  #scrim { display: block; position: fixed; inset: 0; z-index: 1100; background: rgba(0,0,0,.45); opacity: 0; pointer-events: none; transition: opacity .25s ease; }
+  #panel.open ~ #scrim { opacity: 1; pointer-events: auto; }
+
+  .leaflet-top { top: var(--top-h); }
+  .leaflet-left { left: env(safe-area-inset-left, 0px); }
+  .leaflet-right { right: env(safe-area-inset-right, 0px); }
+  .leaflet-bottom { bottom: env(safe-area-inset-bottom, 0px); }
+  #toast { top: calc(var(--top-h) + 10px); }
+}
+
+/* ── 觸控裝置：加大可點區域；輸入框至少 16px，否則 iOS Safari 一點輸入框就會把整頁放大 ── */
+@media (max-width: 760px), (pointer: coarse) {
+  html { touch-action: manipulation; }
+  input, select { font-size: 16px; }
+  .addr input, .btn, select { height: 42px; }
+  .row select { flex: 1; min-width: 0; max-width: 100%; }
+  .seg button { height: 42px; font-size: 13px; }
+  .seg { grid-template-columns: repeat(3, 1fr); }
+  .seg button:nth-child(3n+1) { border-left: 0; }
+  .seg button:nth-child(n+4) { border-top: 1px solid var(--hair); }
+  .chk { padding: 9px 13px 9px 11px; font-size: 14px; }
+  .chk input, .routes input { width: 18px; height: 18px; }
+  .list li { padding: 10px 6px; }
+  .icon-btn { width: 40px; height: 40px; }
+  .link { padding: 8px 0 8px 8px; font-size: 13px; }
+  details summary { padding: 8px 0; }
 }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
 </style>
@@ -201,8 +259,10 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
 <div id="app">
   <aside id="panel" aria-label="查詢與篩選">
     <header class="hd" id="panelHead">
-      <div class="grab" aria-hidden="true"></div>
       <div class="hd-top">
+        <button class="menu-btn" id="btnMenu" type="button" aria-controls="panelBody" aria-expanded="false">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M4 6.5h16M4 12h16M4 17.5h16"/></svg>選單
+        </button>
         <h1>新竹市垃圾車即時地圖</h1>
         <button class="icon-btn" id="btnRefresh" title="立即更新" aria-label="立即更新">
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 4v5h-5"/></svg>
@@ -212,7 +272,13 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
       <div class="next" id="nextUp"></div>
     </header>
 
-    <div class="body">
+    <div class="body" id="panelBody">
+      <div class="drawer-hd">
+        <span>新竹市垃圾車即時地圖</span>
+        <button class="icon-btn" id="btnClose" type="button" title="關閉選單" aria-label="關閉選單">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg>
+        </button>
+      </div>
       <div class="setup" id="setup" hidden>
         <b>尚未設定資料代理網址。</b><br>
         新竹市清運網的資料無法由網頁直接讀取，需要先部署 <code>worker.js</code>（步驟見 README），再把網址填到下方「進階設定」。
@@ -221,7 +287,7 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
       <section>
         <h2>定位</h2>
         <form class="addr" id="addrForm" autocomplete="off">
-          <input id="addrInput" type="search" placeholder="地址或站點，例如：中正路120號" aria-label="地址或站點名稱" maxlength="60">
+          <input id="addrInput" type="search" placeholder="地址或站點，如中正路120號" aria-label="地址或站點名稱" maxlength="60">
           <button class="btn primary" type="submit">搜尋</button>
         </form>
         <ul class="results" id="addrResults"></ul>
@@ -306,7 +372,7 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
       <section>
         <h2>站點圖例</h2>
         <div class="legend">
-          <span><i class="dot"></i>尚未到（粗圈，路線顏色）</span>
+          <span><i class="dot"></i>尚未到（路線色粗圈）</span>
           <span><i class="dot dot-soon"></i>即將抵達</span>
           <span><i class="dot dot-arrived"></i>已抵達</span>
           <span><i class="dot dot-done"></i>已清運</span>
@@ -337,6 +403,7 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
       </section>
     </div>
   </aside>
+  <div id="scrim"></div>
   <div id="map" aria-label="地圖"></div>
 </div>
 <div id="toast" role="status" aria-live="polite"></div>
@@ -684,6 +751,9 @@ var HCGT = (function () {
 
   /* ════════ 地圖 ════════ */
   const isMobile = () => window.matchMedia('(max-width: 760px)').matches;
+  // 手機版上方狀態列浮在地圖上：地圖控制項、彈出視窗、縮放範圍都要避開它
+  const topBarBottom = () => (isMobile() ? Math.round($('panelHead').getBoundingClientRect().bottom) : 0);
+  const syncTopBar = () => document.documentElement.style.setProperty('--top-h', topBarBottom() + 'px');
   const canvas = L.canvas({ padding: 0.3, tolerance: 6 });
   const map = L.map('map', { preferCanvas: true, renderer: canvas, zoomControl: true })
     .setView([state.center.lat, state.center.lon], 16);
@@ -735,7 +805,7 @@ var HCGT = (function () {
 
   function fitToRange() {
     const b = L.latLng(state.center.lat, state.center.lon).toBounds(state.range * 2.15);
-    map.fitBounds(b, { maxZoom: 18, paddingBottomRight: isMobile() ? [0, 108] : [0, 0] });
+    map.fitBounds(b, { maxZoom: 18, paddingTopLeft: [0, topBarBottom()] });
   }
 
   /* ════════ 中心點、範圍 ════════ */
@@ -886,12 +956,15 @@ var HCGT = (function () {
   map.on('popupclose', (e) => { if (e.popup === popup) popupKey = null; });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Escape') return;
-    if (picking) setPicking(false); else map.closePopup();
+    if (isMobile() && $('panel').classList.contains('open')) setPanelOpen(false);
+    else if (picking) setPicking(false);
+    else map.closePopup();
   });
   function openStopPopup(key) {
     const g = lastView && lastView.groups.get(key);
     if (!g) return;
     popupKey = key;
+    popup.options.autoPanPaddingTopLeft = L.point(24, topBarBottom() + 12);
     popup.setLatLng([g.lat, g.lon]).setContent(groupHtml(g, true, lastView.now)).openOn(map);
     const m = stopMarkers.get(key);
     if (m) m.closeTooltip();
@@ -1151,7 +1224,7 @@ var HCGT = (function () {
         if (state.locMode === 'gps') { state.locMode = 'manual'; renderCenterLabel(); save(); }
         return;
       }
-      setCenter(lat, lon, '我的位置', 'gps', { fit: true });
+      if (setCenter(lat, lon, '我的位置', 'gps', { fit: true }) && !silent && isMobile()) setPanelOpen(false);
     }, (err) => {
       if (silent) return;
       toast(err.code === err.PERMISSION_DENIED ? '沒有取得定位權限，請改用地址或點地圖指定'
@@ -1174,9 +1247,13 @@ var HCGT = (function () {
     return (json.candidates || []).filter((c) => {
       if (!c.location || !H.inBounds(c.location.y, c.location.x, b)) return false;
       const type = (c.attributes && c.attributes.Addr_type) || '';
-      if (/^(PointAddress|StreetAddress|Subaddress|StreetInt)$/.test(type)) return c.score >= 85;
+      // StreetAddressExt：門牌超出圖資已知範圍、沿路推算的位置；仍比「找不到」有用，但標示為約略並讓使用者確認
+      if (/^(PointAddress|StreetAddress|StreetAddressExt|Subaddress|StreetInt)$/.test(type)) return c.score >= 85;
       return type === 'StreetName' && c.score >= 95 && !!road && H.normText(c.address).includes(road);
-    }).map((c) => ({ kind: '地址', label: String(c.address).replace(/,\s*\d{3,6}$/, ''), lat: c.location.y, lon: c.location.x }));
+    }).map((c) => ({
+      kind: c.attributes.Addr_type === 'StreetAddressExt' ? '地址（約略）' : '地址',
+      label: String(c.address).replace(/,\s*\d{3,6}$/, ''), lat: c.location.y, lon: c.location.x,
+    }));
   }
 
   async function searchStops(q) {
@@ -1235,16 +1312,35 @@ var HCGT = (function () {
     clearTimeout(toastTimer);
     toastTimer = setTimeout(() => el.classList.remove('show'), 3200);
   }
-  function setPanelOpen(open) { $('panel').classList.toggle('open', open); }
+  // 手機版的功能列開合（電腦版永遠顯示，這個狀態不影響版面）
+  function setPanelOpen(open) {
+    const panel = $('panel'), was = panel.classList.contains('open');
+    if (open === was) return;
+    panel.classList.toggle('open', open);
+    $('btnMenu').setAttribute('aria-expanded', String(open));
+    if (open) $('btnClose').focus({ preventScroll: true });
+    else if ($('panelBody').contains(document.activeElement)) $('btnMenu').focus({ preventScroll: true });
+  }
   const activate = (el, fn) => {
     el.addEventListener('click', fn);
     el.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); fn(e); } });
   };
 
-  $('panelHead').addEventListener('click', (e) => {
-    if (!isMobile() || e.target.closest('button')) return;
-    setPanelOpen(!$('panel').classList.contains('open'));
-  });
+  $('btnMenu').addEventListener('click', () => setPanelOpen(true));
+  $('btnClose').addEventListener('click', () => setPanelOpen(false));
+  $('scrim').addEventListener('click', () => setPanelOpen(false));
+  // 在功能列上向左滑也可關閉
+  let swipe = null;
+  $('panelBody').addEventListener('touchstart', (e) => {
+    const t = e.touches[0];
+    swipe = e.touches.length === 1 && !e.target.closest('input, select') ? { x: t.clientX, y: t.clientY } : null;
+  }, { passive: true });
+  $('panelBody').addEventListener('touchend', (e) => {
+    if (!swipe) return;
+    const t = e.changedTouches[0], dx = t.clientX - swipe.x, dy = t.clientY - swipe.y;
+    swipe = null;
+    if (dx < -70 && Math.abs(dy) < 50) setPanelOpen(false);
+  }, { passive: true });
   $('btnRefresh').addEventListener('click', () => refresh());
   $('btnLocate').addEventListener('click', () => locateMe(false));
   $('btnPick').addEventListener('click', () => setPicking(!picking));
@@ -1329,8 +1425,10 @@ var HCGT = (function () {
   renderCenterLabel();
   renderApiInfo();
   renderStatus();
+  syncTopBar();
+  if (window.ResizeObserver) new ResizeObserver(syncTopBar).observe($('panelHead'));
   setTimeout(() => { map.invalidateSize(); fitToRange(); }, 0);
-  window.addEventListener('resize', () => map.invalidateSize());
+  window.addEventListener('resize', () => { syncTopBar(); map.invalidateSize(); });
   refresh();
   if (state.locMode === 'gps') locateMe(true);
 })();
