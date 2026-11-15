@@ -133,7 +133,8 @@ select { height: 32px; padding: 0 8px; border: 1px solid var(--border); border-r
 .legend span { display: flex; align-items: center; gap: 8px; }
 
 details summary { cursor: pointer; color: var(--ink-2); font-size: 13px; }
-details .hint { font-size: 12px; color: var(--ink-2); margin: 8px 0; }
+details .hint, .note { font-size: 12px; color: var(--ink-2); margin: 8px 0; }
+.note { margin-bottom: 0; }
 .setup { margin: 12px 0 0; padding: 12px; border-radius: 10px; border: 1px solid var(--serious); background: color-mix(in srgb, var(--serious) 12%, transparent); font-size: 13px; }
 .setup[hidden] { display: none; }
 .foot { font-size: 11.5px; color: var(--muted); line-height: 1.6; }
@@ -341,6 +342,14 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
           <label class="chk"><input type="checkbox" data-bind="layers.stops">站點</label>
           <label class="chk"><input type="checkbox" data-bind="layers.cars">車輛</label>
         </div>
+        <div class="row">
+          <label class="chk"><input type="checkbox" data-bind="layers.arrows">行進方向</label>
+          <label class="chk"><input type="checkbox" data-bind="layers.labels">到站時間</label>
+        </div>
+        <div class="row"><span class="lbl">沿路</span>
+          <select data-bind="layers.along" aria-label="沿路站點顯示範圍" id="alongSel"></select>
+        </div>
+        <p class="note">「沿路」是搜尋範圍內的路線在範圍外的站點，方便看車子一路過來的預估時間。</p>
         <div class="row"><span class="lbl">車輛</span>
           <select data-bind="layers.carScope" aria-label="車輛顯示範圍">
             <option value="routes">只顯示範圍內路線的執勤車</option>
@@ -381,6 +390,7 @@ code { font: 12px ui-monospace, SFMono-Regular, Menlo, monospace; background: va
           <span><i class="dot dot-off"></i>今日未收運（細圈）</span>
           <span><i class="dot dot-returning"></i>回送中／公告</span>
         </div>
+        <p class="note">小一號的圓點是範圍外的沿路站點；路線上的箭頭是行進方向；站點旁的文字是預估或表定的到站時間。</p>
       </section>
 
       <section>
@@ -551,6 +561,40 @@ var HCGT = (function () {
     return set('eta', '約 ' + fmtEta(est) + '後抵達');
   }
 
+  /** 畫在地圖站點旁的短文字：預估幾分後到、或表定時間；已清運、今日不收等不標，避免畫面太雜。 */
+  function shortLabel(p, info) {
+    switch (info.state) {
+      case 'eta': return '約 ' + fmtEta(info.etaSec);
+      case 'soon': return '即將抵達';
+      case 'arrived': return '已抵達';
+      case 'delayed': return '延遲';
+      case 'scheduled': return info.label.indexOf('表定') === 0 ? (p.start || '') : '';   // 表定時間已過又沒有即時資訊的不標
+      default: return '';
+    }
+  }
+
+  /**
+   * 沿著折線每隔 every 像素放一個方向箭頭。rings 為多段 [{x,y}, …]（點的順序即行車方向），
+   * 距離跨段累計，所以箭頭間隔在整條路線上是均勻的。回傳 [{x, y, ang}]，ang 為弧度。
+   */
+  function arrowsAlong(rings, every) {
+    var out = [], next = every / 2, MIN = 10;
+    (rings || []).forEach(function (ring) {
+      for (var i = 1; i < ring.length; i++) {
+        var a = ring[i - 1], b = ring[i], dx = b.x - a.x, dy = b.y - a.y, len = Math.sqrt(dx * dx + dy * dy);
+        if (!len) continue;
+        if (len < MIN) { next = Math.max(0, next - len); continue; }   // 太短的小段方向不穩定，留到下一段再畫
+        var at = next;
+        while (at <= len) {
+          out.push({ x: a.x + dx * at / len, y: a.y + dy * at / len, ang: Math.atan2(dy, dx) });
+          at += every;
+        }
+        next = at - len;
+      }
+    });
+    return out;
+  }
+
   /** getRouteTrack 的 data.track → [[ [lat,lon], … ], …]，略過格式異常的座標。 */
   function parseTrack(data) {
     var num = /^-?\d+(\.\d+)?$/, segs = [];
@@ -573,7 +617,8 @@ var HCGT = (function () {
     taipeiNow: taipeiNow, parseTaipei: parseTaipei, parseDays: parseDays, haversine: haversine,
     hhmmToMin: hhmmToMin, periodOf: periodOf, fmtEta: fmtEta, fmtDist: fmtDist, esc: esc,
     normText: normText, inBounds: inBounds, normPoint: normPoint, normCar: normCar,
-    STATE_RANK: STATE_RANK, describeStop: describeStop, parseTrack: parseTrack
+    STATE_RANK: STATE_RANK, describeStop: describeStop, parseTrack: parseTrack,
+    shortLabel: shortLabel, arrowsAlong: arrowsAlong
   };
 })();
 </script>
@@ -598,6 +643,11 @@ var HCGT = (function () {
     ROUTE_COLORS: ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#e87ba4', '#008300', '#6250d6', '#e34948'],
     OTHER_COLOR: '#6f6e69',
     LIST_LIMIT: 150,
+    // 沿路站點：搜尋範圍內的路線，在範圍外要顯示到多遠（以查詢中心為準）
+    ALONG: [['0', '不顯示範圍外的站點'], ['1000', '顯示到中心 1 公里內'], ['2000', '顯示到中心 2 公里內'], ['3000', '顯示到中心 3 公里內'], ['all', '整條路線都顯示']],
+    TIMETABLE_MAX: 8,               // 路線不超過這個數量時逐條抓時刻表（每條約 2KB），否則改抓全市資料（約 180KB）
+    ARROW_EVERY: 130,               // 方向箭頭的間隔（螢幕像素）
+    LABEL_MIN_ZOOM: 15,             // 地圖縮到比這個層級更小時不畫到站時間，避免擠成一團
     STORE_KEY: 'hcgt.settings.v1',
   };
 
@@ -619,7 +669,7 @@ var HCGT = (function () {
   const DEFAULTS = {
     center: { ...CONFIG.CITY_HALL }, centerLabel: '新竹市政府', locMode: 'gps', range: 300,
     filters: { trash: true, recycle: true, todayOnly: true, undone: true, done: true, period: 'all', street: true, fixed: true },
-    layers: { tracks: true, stops: true, cars: true, carScope: 'routes' },
+    layers: { tracks: true, stops: true, cars: true, carScope: 'routes', arrows: true, labels: true, along: 'all' },
     refresh: { auto: true, interval: 30 },
     apiBase: '', baseLayer: '',
   };
@@ -637,11 +687,15 @@ var HCGT = (function () {
     if (!H.inBounds(s.center.lat, s.center.lon, CONFIG.BOUNDS)) { s.center = { ...CONFIG.CITY_HALL }; s.centerLabel = '新竹市政府'; }
     if (!CONFIG.RANGES.includes(s.range)) s.range = 300;
     if (!CONFIG.INTERVALS.includes(s.refresh.interval)) s.refresh.interval = 30;
+    if (!CONFIG.ALONG.some((a) => a[0] === s.layers.along)) s.layers.along = 'all';
     return s;
   }
 
   const state = loadSettings();
-  const live = { points: [], cars: [], lastUpdate: null, error: '', busy: false, countdown: state.refresh.interval };
+  // points：搜尋範圍內的站點。routePoints：沿路站點的來源（沒載入時為 null），
+  // routeCover 記錄它涵蓋哪些路線：'all'＝全市資料，或已載入時刻表的路線編號集合
+  const live = { points: [], routePoints: null, routeCover: null, cars: [], lastUpdate: null, error: '', busy: false, countdown: state.refresh.interval };
+  const alongLimit = () => (state.layers.along === 'all' ? Infinity : Number(state.layers.along) || 0);
   const hiddenRoutes = new Set();
   const routeSlots = new Map();     // routeId → 配色編號（-1 = 其他）
   const routeNames = new Map();
@@ -706,6 +760,8 @@ var HCGT = (function () {
     return fullCache.pending;
   }
 
+  const trackLimit = makeLimiter(4);   // 軌跡與時刻表共用，同時最多 4 個請求
+
   async function loadPoints(signal) {
     const c = state.center;
     let raw;
@@ -715,12 +771,31 @@ var HCGT = (function () {
     } else {
       raw = await getAllRaw(8000);
     }
-    const out = [];
+    const near = [], every = [];
     for (const r of raw) {
       const p = H.normPoint(r, c);
-      if (p && p.dist <= state.range) out.push(p);
+      if (!p) continue;
+      every.push(p);
+      if (p.dist <= state.range) near.push(p);
     }
-    return out;
+    // all：這次若抓的是全市資料，一併交出去給沿路站點用，不必再抓一次
+    return { near, all: state.range > CONFIG.SERVER_RANGE_MAX ? every : null };
+  }
+
+  /**
+   * 沿路站點的資料：這些路線的全部站點（含即時狀態）。
+   * 路線少時逐條抓時刻表（每條約 2KB），多時直接用全市資料（約 180KB）。
+   * 回傳 { points, cover }，cover 的意義見 live.routeCover。
+   */
+  async function loadRouteStops(routeIds, signal) {
+    const norm = (raws) => { const out = []; for (const r of raws) { const q = H.normPoint(r, state.center); if (q) out.push(q); } return out; };
+    if (routeIds.size > CONFIG.TIMETABLE_MAX) return { points: norm(await getAllRaw(8000)), cover: 'all' };
+    const ids = [...routeIds];
+    const got = await Promise.allSettled(ids.map((id) =>
+      trackLimit(() => api('getTimeTable', { rId: id }, signal)).then((d) => (d && d.cleanPoint) || [])));
+    // 個別路線失敗時，那條這一輪只顯示範圍內的站點
+    const cover = new Set(ids.filter((id, i) => got[i].status === 'fulfilled'));
+    return { points: norm(got.flatMap((g) => (g.status === 'fulfilled' ? g.value : []))), cover };
   }
 
   async function loadCars(signal) {
@@ -738,7 +813,6 @@ var HCGT = (function () {
     };
     return (fn) => new Promise((res, rej) => { q.push({ fn, res, rej }); next(); });
   }
-  const trackLimit = makeLimiter(4);
   const trackCache = new Map();     // routeId → Promise<segments>
   function getTrack(routeId) {
     if (!trackCache.has(routeId)) {
@@ -881,14 +955,34 @@ var HCGT = (function () {
       routeSlots.set(r.id, used < CONFIG.ROUTE_COLORS.length ? used : -1);
     }
     const visible = matched.filter((e) => !hiddenRoutes.has(e.p.routeId)).sort(compareEntries);
-    // 同一個位置可能同時屬於好幾條路線，合併成一個標記
-    const groups = new Map();
-    for (const e of visible) {
-      let g = groups.get(e.p.locKey);
-      if (!g) { g = { key: e.p.locKey, lat: e.p.lat, lon: e.p.lon, name: e.p.name, dist: e.p.dist, entries: [] }; groups.set(g.key, g); }
-      g.entries.push(e);
+    // 沿路站點：上面這些路線在搜尋範圍外的站點（套用同樣的篩選），只畫在地圖上，不進列表
+    const far = [], limit = alongLimit();
+    if (limit > state.range && live.routePoints) {
+      for (const p of live.routePoints) {
+        if (p.dist <= state.range || p.dist > limit || !routes.has(p.routeId) || hiddenRoutes.has(p.routeId)) continue;
+        const info = H.describeStop(p, now);
+        if (passes(p, info)) far.push({ p, info, far: true });
+      }
+      far.sort(compareEntries);
     }
-    return { now, matched, routes, visible, groups };
+    // 同一個位置可能同時屬於好幾條路線，合併成一個標記。Map 的順序＝重要性：範圍內的在前，沿路的在後
+    const groups = new Map();
+    const add = (e) => {
+      let g = groups.get(e.p.locKey);
+      if (!g) { g = { key: e.p.locKey, lat: e.p.lat, lon: e.p.lon, name: e.p.name, dist: e.p.dist, far: !!e.far, entries: [] }; groups.set(g.key, g); }
+      g.entries.push(e);
+    };
+    visible.forEach(add);
+    const nearCount = groups.size;
+    far.forEach(add);
+    return { now, matched, routes, visible, groups, nearCount, farCount: groups.size - nearCount };
+  }
+
+  /** 目前要顯示的路線中，是否有還沒載入沿路站點的（例如剛改了篩選或剛打開沿路站點）。 */
+  function routeStopsMissing(view) {
+    if (!(alongLimit() > state.range) || live.routeCover === 'all') return false;
+    for (const id of view.routes.keys()) if (!live.routeCover || !live.routeCover.has(id)) return true;
+    return false;
   }
 
   function routeColor(routeId) {
@@ -944,12 +1038,71 @@ var HCGT = (function () {
 
   function stopStyle(g) {
     const st = STOP_STYLE[g.entries[0].info.state] || STOP_STYLE.scheduled;
-    return {
-      radius: st.r + (g.entries.length > 1 ? 1 : 0),
-      color: st.ring || routeColor(g.entries[0].p.routeId), weight: st.w, opacity: 1,
-      fillColor: st.fill, fillOpacity: st.fo == null ? 1 : st.fo,
-    };
+    const color = st.ring || routeColor(g.entries[0].p.routeId), fillOpacity = st.fo == null ? 1 : st.fo;
+    // 範圍外的沿路站點畫小一號，讓範圍內的站點保持醒目
+    if (g.far) return { radius: Math.round(st.r * 1.24) / 2, color, weight: Math.min(st.w, 2), opacity: 1, fillColor: st.fill, fillOpacity };
+    return { radius: st.r + (g.entries.length > 1 ? 1 : 0), color, weight: st.w, opacity: 1, fillColor: st.fill, fillOpacity };
   }
+
+  /* 以下兩個圖層直接畫在 Leaflet 的 canvas 上，用到 Leaflet 1.9 的內部欄位（_renderer、_rings、_point…），
+     升級 Leaflet 版本時要一併檢查。 */
+
+  // 站點圓點＋旁邊的到站時間。_lb = { text, w, side }（side：1 畫在右邊、-1 畫在左邊），由 layoutLabels() 決定
+  const LABEL_FONT = '600 12px system-ui, -apple-system, "Segoe UI", "PingFang TC", "Microsoft JhengHei", sans-serif';
+  const StopMarker = L.CircleMarker.extend({
+    _updateBounds() {
+      L.CircleMarker.prototype._updateBounds.call(this);
+      const lb = this._lb;
+      if (!lb) return;
+      const reach = this._radius + 6 + lb.w + 4;     // 重繪範圍要包含文字，否則局部重繪時會留下殘影
+      if (lb.side > 0) this._pxBounds.max.x = this._point.x + reach; else this._pxBounds.min.x = this._point.x - reach;
+    },
+    _updatePath() {
+      L.CircleMarker.prototype._updatePath.call(this);
+      const lb = this._lb, r = this._renderer;
+      if (!lb || !r._drawing || this._empty()) return;
+      const ctx = r._ctx, x = this._point.x + lb.side * (this._radius + 6), y = this._point.y + 0.5;
+      ctx.save();
+      ctx.globalAlpha = 1; ctx.setLineDash([]);
+      ctx.font = LABEL_FONT; ctx.textBaseline = 'middle'; ctx.textAlign = lb.side > 0 ? 'left' : 'right';
+      ctx.lineJoin = 'round'; ctx.lineWidth = 3.5; ctx.strokeStyle = 'rgba(255,255,255,.94)';
+      ctx.strokeText(lb.text, x, y);
+      ctx.fillStyle = '#0b0b0b';       // 文字一律用墨色，不用路線顏色；底圖在深色模式下也是淺色
+      ctx.fillText(lb.text, x, y);
+      ctx.restore();
+    },
+  });
+
+  // 路線＋行進方向箭頭。箭頭位置只在縮放層級改變時重算，平移地圖時不會跳動
+  const ArrowLine = L.Polyline.extend({
+    _project() {
+      L.Polyline.prototype._project.call(this);
+      this._arrows = null;
+    },
+    _updatePath() {
+      L.Polyline.prototype._updatePath.call(this);
+      const o = this.options, r = this._renderer;
+      if (!o.arrows || !r._drawing || !this._rings || !this._parts.length) return;
+      if (!this._arrows) this._arrows = H.arrowsAlong(this._rings.map((ring) => L.LineUtil.simplify(ring, 1.5)), CONFIG.ARROW_EVERY);
+      const ctx = r._ctx, b = r._bounds, k = o.arrowScale || 1, pad = 10;
+      ctx.save();
+      ctx.globalAlpha = 1; ctx.setLineDash([]);
+      ctx.lineJoin = 'round'; ctx.lineWidth = 2.5; ctx.strokeStyle = '#ffffff'; ctx.fillStyle = o.color;
+      for (const a of this._arrows) {
+        if (a.x < b.min.x - pad || a.x > b.max.x + pad || a.y < b.min.y - pad || a.y > b.max.y + pad) continue;
+        const c = Math.cos(a.ang) * k, n = Math.sin(a.ang) * k;
+        ctx.beginPath();
+        ctx.moveTo(a.x + 8 * c, a.y + 8 * n);                         // 箭頭尖端
+        ctx.lineTo(a.x - 5.5 * c + 6 * n, a.y - 5.5 * n - 6 * c);
+        ctx.lineTo(a.x - 2 * c, a.y - 2 * n);                         // 尾端內凹
+        ctx.lineTo(a.x - 5.5 * c - 6 * n, a.y - 5.5 * n + 6 * c);
+        ctx.closePath();
+        ctx.stroke();
+        ctx.fill();
+      }
+      ctx.restore();
+    },
+  });
 
   const popup = L.popup({ maxWidth: 320, autoPanPadding: [24, 24] });
   let popupKey = null;
@@ -976,20 +1129,25 @@ var HCGT = (function () {
       if (!want.has(key)) { map.removeLayer(m); stopMarkers.delete(key); }
     }
     for (const g of want.values()) {
-      const style = stopStyle(g), html = groupHtml(g, false, view.now);
+      const style = stopStyle(g);
+      const sig = [style.radius, style.color, style.weight, style.fillColor, style.fillOpacity].join('|');
       let m = stopMarkers.get(g.key);
       if (!m) {
-        m = L.circleMarker([g.lat, g.lon], { ...style, renderer: canvas });
-        m.bindTooltip(html, { direction: 'top', offset: [0, -8], opacity: 1 });
-        m.on('click', () => { if (!picking) openStopPopup(g.key); });
-        m.on('tooltipopen', () => { if (popupKey === g.key) m.closeTooltip(); });
+        m = new StopMarker([g.lat, g.lon], { ...style, renderer: canvas });
+        const key = g.key;
+        // 內容在提示框打開時才產生：沿路站點可能有上千個，不必每次更新都重組全部的 HTML
+        m.bindTooltip(() => (lastView && m._g ? groupHtml(m._g, false, lastView.now) : ''), { direction: 'top', offset: [0, -8], opacity: 1 });
+        m.on('click', () => { if (!picking) openStopPopup(key); });
+        m.on('tooltipopen', () => { if (popupKey === key) m.closeTooltip(); });
+        m._g = g;
         m.addTo(map);
-        stopMarkers.set(g.key, m);
+        stopMarkers.set(key, m);
       } else {
-        m.setStyle(style);
-        m.setRadius(style.radius);
-        m.setTooltipContent(html);
+        m._g = g;
+        if (m._sig !== sig) { m.setStyle(style); m.setRadius(style.radius); }
+        if (m.isTooltipOpen()) m.getTooltip().update();
       }
+      m._sig = sig;
     }
     if (popupKey) {
       const g = view.groups.get(popupKey);
@@ -998,6 +1156,65 @@ var HCGT = (function () {
     }
   }
 
+  /**
+   * 決定哪些站點旁邊要標到站時間。越重要的站點越先選位置（範圍內 → 即將抵達 → …），
+   * 標籤不能蓋到別的站點或別的標籤；右邊放不下試左邊，都不行就不標。
+   * 位置以目前縮放層級的像素座標計算，平移地圖時結果不變，所以只在資料更新與縮放後重算。
+   */
+  const labelWidths = new Map();
+  let measureCtx = null;
+  function labelWidth(text) {
+    let w = labelWidths.get(text);
+    if (w == null) {
+      if (!measureCtx) { measureCtx = document.createElement('canvas').getContext('2d'); measureCtx.font = LABEL_FONT; }
+      w = Math.ceil(measureCtx.measureText(text).width);
+      labelWidths.set(text, w);
+    }
+    return w;
+  }
+  function layoutLabels() {
+    const picked = new Map();     // locKey → { text, w, side }
+    if (lastView && state.layers.labels && state.layers.stops && map.getZoom() >= CONFIG.LABEL_MIN_ZOOM) {
+      const CELL = 48, grid = new Map();
+      const cells = (x0, y0, x1, y1, fn) => {
+        for (let cx = Math.floor(x0 / CELL); cx <= Math.floor(x1 / CELL); cx++) {
+          for (let cy = Math.floor(y0 / CELL); cy <= Math.floor(y1 / CELL); cy++) if (fn(cx + ',' + cy)) return true;
+        }
+        return false;
+      };
+      const put = (box) => cells(box[0], box[1], box[2], box[3], (k) => { const a = grid.get(k); if (a) a.push(box); else grid.set(k, [box]); });
+      const blocked = (box) => cells(box[0], box[1], box[2], box[3], (k) =>
+        (grid.get(k) || []).some((o) => o[0] < box[2] && o[2] > box[0] && o[1] < box[3] && o[3] > box[1]));
+      const items = [];
+      for (const g of lastView.groups.values()) {
+        const m = stopMarkers.get(g.key);
+        if (!m) continue;
+        const pt = map.latLngToLayerPoint(m.getLatLng()), r = m.getRadius() + 1;
+        put([pt.x - r, pt.y - r, pt.x + r, pt.y + r]);
+        const text = H.shortLabel(g.entries[0].p, g.entries[0].info);
+        if (text) items.push({ key: g.key, pt, r, text });
+      }
+      for (const it of items) {
+        const w = labelWidth(it.text);
+        for (const side of [1, -1]) {
+          const x0 = side > 0 ? it.pt.x + it.r + 3 : it.pt.x - it.r - 7 - w;
+          const box = [x0, it.pt.y - 8, x0 + w + 4, it.pt.y + 8];
+          if (blocked(box)) continue;
+          put(box);
+          picked.set(it.key, { text: it.text, w, side });
+          break;
+        }
+      }
+    }
+    for (const [key, m] of stopMarkers) {
+      const lb = picked.get(key) || null, old = m._lb || null;
+      if ((lb && lb.text) === (old && old.text) && (lb && lb.side) === (old && old.side)) continue;
+      m._lb = lb;
+      m.redraw();
+    }
+  }
+  map.on('zoomend', layoutLabels);
+
   function trackStyle(routeId) {
     const other = isOtherRoute(routeId), hot = hoverRoute === routeId;
     return {
@@ -1005,6 +1222,7 @@ var HCGT = (function () {
       weight: other ? (hot ? 5 : 2) : (hot ? 7 : 4),
       opacity: other ? (hot ? 1 : 0.6) : 0.95,
       dashArray: other && !hot ? '5 6' : null,     // 虛線，避免和底圖的灰色道路混淆
+      arrows: state.layers.arrows, arrowScale: other ? 0.8 : 1,
     };
   }
   function addTrack(routeId, segs) {
@@ -1012,7 +1230,7 @@ var HCGT = (function () {
     if (!isOtherRoute(routeId)) {
       t.casing = L.polyline(segs, { color: '#ffffff', weight: 8, opacity: 0.85, interactive: false, renderer: canvas }).addTo(map);
     }
-    t.line = L.polyline(segs, { ...trackStyle(routeId), renderer: canvas }).addTo(map);
+    t.line = new ArrowLine(segs, { ...trackStyle(routeId), renderer: canvas }).addTo(map);
     t.line.bindTooltip(() => esc(routeNames.get(routeId) || '路線'), { sticky: true, opacity: 1 });
     trackLayers.set(routeId, t);
   }
@@ -1037,7 +1255,7 @@ var HCGT = (function () {
         trackPending.delete(rid);
         if (!wantTracks.has(rid) || trackLayers.has(rid) || !segs.length) return;
         addTrack(rid, segs);
-        restack();
+        restackSoon();
       }, () => { trackPending.delete(rid); });
     }
   }
@@ -1051,6 +1269,13 @@ var HCGT = (function () {
       for (const g of order) { const m = stopMarkers.get(g.key); if (m) m.bringToFront(); }
     }
     rangeCircle.bringToBack();
+  }
+  // 路線軌跡是一條一條陸續載入的，合併成每個畫面更新一次重排
+  let restackQueued = false;
+  function restackSoon() {
+    if (restackQueued) return;
+    restackQueued = true;
+    requestAnimationFrame(() => { restackQueued = false; restack(); });
   }
 
   function carIcon(c) {
@@ -1101,9 +1326,10 @@ var HCGT = (function () {
   }
 
   function renderList(view, carCount) {
-    const n = view.groups.size, routesShown = new Set(view.visible.map((e) => e.p.routeId)).size;
+    const n = view.nearCount, routesShown = new Set(view.visible.map((e) => e.p.routeId)).size;
     $('summary').innerHTML = '範圍內 <b>' + n + '</b> 個站點、<b>' + routesShown + '</b> 條路線' +
-      (state.layers.cars ? '，<b>' + carCount + '</b> 輛車執勤中' : '');
+      (state.layers.cars ? '，<b>' + carCount + '</b> 輛車執勤中' : '') +
+      (view.farCount ? '<br>地圖上另以小圓點顯示這些路線在範圍外的 <b>' + view.farCount + '</b> 個站點' : '');
 
     let empty = '';
     if (!view.visible.length && live.lastUpdate) {
@@ -1167,6 +1393,7 @@ var HCGT = (function () {
     syncTracks(view);
     const carCount = syncCars(view);
     restack();
+    layoutLabels();
     renderRoutes(view);
     renderList(view, carCount);
     renderStatus();
@@ -1183,10 +1410,24 @@ var HCGT = (function () {
     live.busy = true;
     renderStatus();
     try {
-      const [pts, cars] = await Promise.allSettled([loadPoints(abortCtl.signal), loadCars(abortCtl.signal)]);
+      const signal = abortCtl.signal;
+      const [pts, cars] = await Promise.allSettled([loadPoints(signal), loadCars(signal)]);
       if (seq !== refreshSeq) return;
       if (pts.status === 'rejected') throw pts.reason;
-      live.points = pts.value;
+      // 沿路站點要先知道範圍內有哪些路線（符合目前篩選的）才能抓；失敗不影響主要資料，這一輪就只顯示範圍內的站點
+      let along = { points: null, cover: null };
+      if (alongLimit() > state.range) {
+        if (pts.value.all) along = { points: pts.value.all, cover: 'all' };
+        else {
+          const now = H.taipeiNow(), ids = new Set();
+          for (const q of pts.value.near) if (passes(q, H.describeStop(q, now))) ids.add(q.routeId);
+          try { if (ids.size) along = await loadRouteStops(ids, signal); } catch (e) { /* 維持 null */ }
+          if (seq !== refreshSeq) return;
+        }
+      }
+      live.points = pts.value.near;
+      live.routePoints = along.points;
+      live.routeCover = along.cover;
       if (cars.status === 'fulfilled') live.cars = cars.value;
       live.lastUpdate = new Date();
       live.error = '';
@@ -1350,13 +1591,15 @@ var HCGT = (function () {
 
   $('intervalSel').innerHTML = CONFIG.INTERVALS.map((s) =>
     '<option value="' + s + '">每 ' + (s < 60 ? s + ' 秒' : s / 60 + ' 分鐘') + '</option>').join('');
+  $('alongSel').innerHTML = CONFIG.ALONG.map(([v, t]) => '<option value="' + v + '">' + t + '</option>').join('');
   document.querySelectorAll('[data-bind]').forEach((el) => {
     const [grp, key] = el.dataset.bind.split('.');
     if (el.type === 'checkbox') el.checked = !!state[grp][key]; else el.value = String(state[grp][key]);
     el.addEventListener('change', () => {
       state[grp][key] = el.type === 'checkbox' ? el.checked : el.dataset.num ? Number(el.value) : el.value;
       save();
-      if (grp === 'refresh') { live.countdown = state.refresh.interval; renderStatus(); } else render();
+      if (grp === 'refresh') { live.countdown = state.refresh.interval; renderStatus(); }
+      else { render(); if (routeStopsMissing(lastView)) refresh(); }   // 新出現的路線還沒有沿路站點資料，補抓
     });
   });
 
@@ -1374,6 +1617,7 @@ var HCGT = (function () {
     state.filters.todayOnly = false;
     document.querySelector('[data-bind="filters.todayOnly"]').checked = false;
     save(); render();
+    if (routeStopsMissing(lastView)) refresh();
   });
 
   const routeList = $('routeList');
